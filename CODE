@@ -1,0 +1,256 @@
+# Import relevant libraries
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import matplotlib.pyplot as plt
+from glob import glob
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix
+# Data Preparation
+# Define direktory
+train_dir = '../input/labeled-chest-xray-images/chest_xray/train'
+val_dir = '../input/labeled-chest-xray-images/chest_xray/test'
+# Visualize Image before Image Augmentation
+train_pneumonia_img = glob(train_dir+'/PNEUMONIA/*.jpeg') # Load all pneumonia images from train directory
+train_normal_img = glob(train_dir+'/NORMAL/*.jpeg') # Load all normal images frin train directory
+pneumonia = np.asarray(plt.imread(train_pneumonia_img[0]))
+normal = np.asarray(plt.imread(train_normal_img[0]))
+plt.title('PNEUMONIA', fontsize=20, color='white')
+plt.imshow(pneumonia)
+print(pneumonia.shape) # print image size
+plt.title('NORMAL', fontsize=20, color='white')
+plt.imshow(normal)
+print(normal.shape) # print image size
+# Data preprocessing
+# ImageDataGenerator for training and test
+datagen = ImageDataGenerator(validation_split = 0.25, 
+                             rescale=1./255, 
+                             rotation_range = 30, 
+                             zoom_range = 0.15, 
+                             width_shift_range=0.15, 
+                             height_shift_range=0.15, 
+                             horizontal_flip=False,
+                             vertical_flip=False)
+# ImageDataGenerator for val set
+val_datagen = ImageDataGenerator(rescale=1./255)
+IMG_SIZE = (227, 227)
+train_set = datagen.flow_from_directory(train_dir, 
+                                        subset= 'training',
+                                        class_mode='binary', 
+                                        batch_size= 32,
+                                        target_size=IMG_SIZE)
+test_set = datagen.flow_from_directory(train_dir, 
+                                        subset= 'validation',
+                                        class_mode='binary', 
+                                        batch_size= 32,
+                                        target_size=IMG_SIZE)
+X_train, y_train = train_set.next()
+X_test, y_test = test_set.next()
+print(len(X_train), len(y_train))
+print('Train X=%s Y=%s' %(X_train.shape, y_train.shape))
+print('Test X=%s Y=%s' %(X_test.shape, y_test.shape))
+
+
+labels = ['Normal' if label == 0 else 'Pneumonia' for label in y_train]
+sns.countplot(labels)
+for idx in range(10):
+    plt.figure(figsize=(5, 5))
+    plt.imshow(X_train[idx])
+    plt.title(labels[idx])
+X_train[0].shape
+# AlexNet CNN Architecture
+
+# Create callbacks for our model
+
+# Create checkpoint callback
+checkpoint_cb = tf.keras.callbacks.ModelCheckpoint('model_alex_net.h5') 
+
+# Create Custom callback
+class CustomCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs={}):
+        if(logs.get('accuracy') > 0.93 and logs.get('val_accuracy') > 0.93) and (logs.get('loss')<= 0.3 and logs.get('val_loss') <= 0.3):
+            if logs.get('accuracy') <= logs.get('val_accuracy'):
+                self.model.stop_training = True
+            else:
+                self.model.stop_training = False
+#             if(logs.get('accuracy') > 0.94 and logs.get('val_accuracy') > 0.94) and (logs.get('loss')<= 0.3 and logs.get('val_loss') <= 0.3):
+
+custom_cb = CustomCallback()
+# Define alexNet model
+
+
+model_alex_net = tf.keras.models.Sequential([
+     # 1st conv layer                                        
+    tf.keras.layers.Conv2D(filters=96, kernel_size=(11,11), strides=(4,4), activation='relu', input_shape=(227,227,3),
+                           padding='valid'),
+    tf.keras.layers.BatchNormalization(),
+    # Max pooling
+    tf.keras.layers.MaxPool2D(pool_size=(3,3), strides=(2,2), padding='valid'),
+    
+    # # Dropout to prevent overfit
+    # tf.keras.layers.Dropout(0.5),
+
+    # 2nd conv layer
+    tf.keras.layers.Conv2D(filters=256, kernel_size=(5,5), strides=(1,1), activation='relu', padding="same"),
+
+    # Max pooling
+    tf.keras.layers.MaxPool2D(pool_size=(3,3), strides=(2,2), padding='valid'),
+
+    # # Dropout to prevent overfit
+    # tf.keras.layers.Dropout(0.5),
+    tf.keras.layers.BatchNormalization(),
+    # 3rd conv layer
+    tf.keras.layers.Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), activation='relu', padding="same"),
+    # 4th Conv layer
+    tf.keras.layers.Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), activation='relu', padding="same"),
+    # 5th Conv layer
+    tf.keras.layers.Conv2D(filters=256, kernel_size=(3,3), strides=(1,1), activation='relu', padding="same"),
+    # Max Pooling
+    tf.keras.layers.MaxPool2D(pool_size=(3,3), strides=(2,2)),
+    # Dropout to prevent overfit
+    tf.keras.layers.Dropout(0.5),
+
+    tf.keras.layers.BatchNormalization(),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(4096, activation='relu'),
+    # # Dropout to prevent overfit
+    # tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.BatchNormalization(),
+    tf.keras.layers.Dense(4096, activation='relu'),
+    tf.keras.layers.BatchNormalization(),
+    # Dropout to prevent overfit
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+# Look at summary of our model
+model_alex_net.summary()
+model_alex_net.compile(loss='binary_crossentropy', optimizer =tf.optimizers.Adam(), metrics=['accuracy'])
+hist = model_alex_net.fit(
+    train_set,
+    validation_data = test_set,
+    epochs = 32,
+    callbacks=[custom_cb, checkpoint_cb]
+)
+# Plot accuracy and loss
+
+
+plt.subplot(211)
+plt.title('Binary Crossentropy Loss')
+plt.plot(hist.history['loss'], color ='red', label='train')
+plt.plot(hist.history['val_loss'], color ='green', label='val')
+
+plt.subplot(212)
+plt.title('Classification Accuracy')
+plt.plot(hist.history['accuracy'], color='red', label='train')
+plt.plot(hist.history['val_accuracy'], color='green', label='test')
+
+plt.show()
+# Make Predictions
+# ImageDataGenerator for val set
+val_datagen = ImageDataGenerator(rescale=1./255)
+
+# Create val dataset
+val_set = val_datagen.flow_from_directory(val_dir, 
+                                          batch_size= 32, 
+                                          target_size=IMG_SIZE, 
+                                          class_mode='binary')
+X_val, y_val = val_set.next()
+print('Loss of the model is - ', model_alex_net.evaluate(X_val, y_val)[0])
+print('Accuracy of the model is - ', model_alex_net.evaluate(X_val, y_val)[1]*100, '%')
+predict = model_alex_net.predict_classes(X_val)
+predict = predict.reshape(1, -1)[0]
+predict
+predict_test = model_alex_net.predict_classes(X_test)
+predict_test = predict.reshape(1, -1)[0]
+predict_test
+
+print(classification_report(y_val, predict, target_names = ['Pneumonia (Class 0)','Normal (Class 1)']))
+print(classification_report(y_test, predict_test, target_names = ['Pneumonia (Class 0)','Normal (Class 1)']))
+print('Confusion Matrix\n')
+matrix = confusion_matrix(y_val, predict)
+print(matrix)
+correct = np.nonzero(predict == y_val)[0]
+incorrect = np.nonzero(predict != y_val)[0]
+print(len(correct), len(incorrect))
+i = 0
+for c in correct[:6]:
+    plt.subplot(3,2,i+1)
+    plt.xticks([])
+    plt.yticks([])
+    plt.imshow(X_val[c], cmap="gray", interpolation='none')
+    plt.title("Predicted Class {}\nActual Class {}".format(predict[c], y_val[c]))
+    plt.tight_layout()
+    i += 1
+i = 0
+for c in incorrect[:6]:
+    plt.subplot(3,2,i+1)
+    plt.xticks([])
+    plt.yticks([])
+    plt.imshow(X_val[c], cmap="gray", interpolation='none')
+    plt.title("Predicted Class {}\nActual Class {}".format(predict[c], y_val[c]))
+    plt.tight_layout()
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import (
+    confusion_matrix, ConfusionMatrixDisplay, classification_report,
+    roc_curve, auc
+)
+from sklearn.preprocessing import label_binarize
+
+# Class names
+classes = ['Normal', 'Bacterial Pneumonia', 'Viral Pneumonia']
+n_classes = len(classes)
+np.random.seed(42)
+
+# Simulate ground truth
+y_true = np.random.choice(classes, 300, p=[0.3, 0.4, 0.3])  # more pneumonia cases
+
+# Simulate predictions with 72% accuracy
+y_pred = []
+for label in y_true:
+    if np.random.rand() < 0.72:  # correct prediction
+        y_pred.append(label)
+    else:
+        y_pred.append(np.random.choice([c for c in classes if c != label]))
+
+# Confusion matrix
+cm = confusion_matrix(y_true, y_pred, labels=classes)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
+disp.plot(cmap=plt.cm.Blues)
+plt.title("Simulated Confusion Matrix (72% Accuracy)")
+plt.show()
+
+# Classification report
+print("Classification Report:")
+print(classification_report(y_true, y_pred, target_names=classes))
+
+# Simulate ROC curves
+y_true_bin = label_binarize([classes.index(y) for y in y_true], classes=[0, 1, 2])
+y_pred_scores = np.clip(np.random.rand(300, 3), 0.1, 0.9)  # fake softmax scores
+
+# Normalize rows to sum to 1
+y_pred_scores = y_pred_scores / y_pred_scores.sum(axis=1, keepdims=True)
+
+# ROC curve for each class
+fpr = dict()
+tpr = dict()
+roc_auc = dict()
+for i in range(n_classes):
+    fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], y_pred_scores[:, i])
+    roc_auc[i] = auc(fpr[i], tpr[i])
+
+# Plot ROC curves
+plt.figure()
+for i in range(n_classes):
+    plt.plot(fpr[i], tpr[i], lw=2, label=f"{classes[i]} (AUC = {roc_auc[i]:.2f})")
+plt.plot([0, 1], [0, 1], 'k--', lw=1)
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("Simulated Multi-Class ROC Curve")
+plt.legend(loc="lower right")
+plt.grid()
+plt.show()
+
